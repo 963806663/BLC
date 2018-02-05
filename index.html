@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Weex</title>
+    <meta name = "viewport" content = "width = device-width, initial-scale = 1.0, maximum-scale = 1.0, user-scalable = 0" />
+    <script src="js/rem.js"></script>
+    <link rel="stylesheet" href="css/index.css">
+    <link rel="stylesheet" href="css/iconfont.css">
+    <script src="js/jquery-3.1.1.min.js"></script>
+    <script src="js/echarts.js"></script>
+</head>
+<body>
+    <div class="wrap">
+        <header>
+            <div id="sss"><i class="iconfont icon-left"></i>返回</div>
+            <select name="sel" id="sel">
+                <option value="">BTC vs USD</option>
+            </select>
+            <div><i class="iconfont icon-full"></i></div>
+        </header>
+        <div class="content">
+            <div>
+                <div id="nowPrice"></div>
+                <ul>
+                    <li>
+                        <p>幅 <span id="range"></span></p>
+                        <p>低 <span id="lowest"></span></p>
+                        <p>
+                            <select name="" id="fsSel">
+                                <option value="1">1分</option>
+                                <option value="3">3分</option>
+                                <option value="5">5分</option>
+                                <option value="15">15分</option>
+                            </select>
+                        </p>
+                    </li>
+                    <li>
+                        <p>量 <span id="volume"></span></p>
+                        <p>高 <span id="highest"></span></p>
+                        <p id="zbBtn"></p>
+                    </li>
+                </ul>
+            </div>
+            <div id="series" class="series"></div>
+            <div id="series1" class="series"></div>
+            <div id="series2" class="series"></div>
+            <div id="series3" class="series"></div>
+            <div id="container" style="width:100%;height:70%;"></div>
+        </div>
+        <footer>
+            <div>买入</div>
+            <div>卖出</div>
+        </footer>
+    </div>
+    <script type="text/javascript">
+
+        //如果选择的时间
+        $("#fsSel").change(function () {
+            min = Number($("#fsSel").val());
+
+            //重置数据
+            lt_time = 0;
+            nextTime =0;
+            dates = [];
+            values = [];
+            vols = [];
+            getHistoryData();
+        });
+
+        //要请求的webSocket地址
+        var wsUrl ="wss://ws.weex.com/";
+
+        //当前价格
+        var nowPrice =  $("#nowPrice");
+
+        //涨跌幅
+        var container = $("#range");
+
+        //今日最高
+        var highest = $("#highest");
+
+        //今日最低
+        var lowest = $("#lowest");
+
+        //24小时成交量
+        var volume = $("#volume");
+
+        //最近的一次价格
+        var lastPrice = 0;
+
+        //K线图时间
+        var min =  1;
+
+        //当前时间
+        var nowTime = null;
+
+        //最后一次推送数据的时间
+        var lt_time= 0;
+
+        //下一次请求数据的时间
+        var nextTime = 0;
+
+        //macd
+        var macd = null,difs = null,dea = null;
+
+
+
+        //公用的包含webSocket请求的方法
+        function runWebsocket(url,data,func) {
+            var websocket = new WebSocket(url);
+            websocket.onopen = function(evt) {
+                var s_obj = data;
+                var s_json = JSON.stringify(s_obj);
+                websocket.send(s_json);
+            };
+            websocket.onmessage = function(evt) {
+                func(evt);
+            };
+            websocket.onclose = function(evt) {};
+            websocket.onerror = function(evt) {};
+        }
+
+
+
+        //当前价格订阅
+        function getNowPrice(){
+            var url = wsUrl;
+            var data = {
+                "params": [
+                    "BTCUSD",
+                    "BTCCNY"
+                ],
+                "method": "price.subscribe",
+                "id": 1000
+            };
+            function func(evt) {
+                var data = JSON.parse(evt.data);
+                if(data.params){
+                    var price = Number(data.params[1]);
+                    if(price > lastPrice){
+                        nowPrice.css("color","green")
+                    } else{
+                        nowPrice.css("color","red")
+                    }
+                    nowPrice.html(price);
+
+                    //涨跌幅
+                    if(lastPrice !== 0){
+                        var range = (price - lastPrice)/lastPrice;
+                        range = (range*100).toFixed(2);
+                        if(range > 0){
+                            container.css("color","green");
+                            range = "+" + range + "%"
+                        } else if(range == 0){
+                            container.css("color","green");
+                            range = range + "%"
+                        } else {
+                            container.css("color","red");
+                            range = range + "%"
+                        }
+                        container.html(range);
+                    } else{
+                        container.css("color","green");
+                        container.html("+0.00%")
+                    }
+
+                    lastPrice = price;
+                }
+            }
+            runWebsocket(url,data,func);
+        }
+        getNowPrice();
+
+
+
+
+        //当日行情订阅
+        function getToday(){
+            var url = wsUrl;
+            var data = {
+                "params": [
+                    "BTCUSD"
+                ],
+                "method": "today.subscribe",
+                "id": 1000
+            };
+            function func(evt) {
+                var data = JSON.parse(evt.data);
+                if(data.params){
+                    var todayData = data.params[1];
+                    //当日最高
+                    highest.html(todayData.high);
+                    //当日最低
+                    lowest.html(todayData.low);
+                    //24小时成交量
+                    volume.html(todayData.volume)
+                }
+            }
+            runWebsocket(url,data,func);
+        }
+        getToday();
+
+
+
+
+        //获取当前时间
+        function getNowTime() {
+            var url = wsUrl;
+            var data = {
+                "params": [],
+                "method": "server.time",
+                "id": 1000
+            };
+            function func(evt) {
+                var data = JSON.parse(evt.data);
+                nowTime = data.result;
+            }
+            runWebsocket(url,data,func);
+        }
+        getNowTime();
+
+
+
+
+        //K线行情查询(历史记录)
+        function getHistoryData() {
+            var url = wsUrl;
+            var websocket = new WebSocket(url);
+            websocket.onopen = function(evt) {
+                var s_obj = {
+                    "params": [
+                        "BTCUSD",
+                        nowTime - 60*60*12*min,
+                        nowTime,
+                        60 * min
+                    ],
+                    "method": "kline.query",
+                    "id": 1000
+                };
+                var s_json = JSON.stringify(s_obj);
+                websocket.send(s_json);
+            };
+            websocket.onclose = function(evt) {};
+            websocket.onmessage = function(evt) {
+                var data = JSON.parse(evt.data);
+                if(data.result){
+                    re_data(data);
+                    getNowData();
+                }
+            };
+            websocket.onerror = function(evt) {};
+        }
+        getHistoryData();
+
+
+
+
+        //k线行情订阅(实时刷新)
+        function getNowData(){
+            var url = wsUrl;
+            var data = {
+                "params": [
+                    "BTCUSD",
+                    60 * min
+                ],
+                "method": "kline.subscribe",
+                "id": 1
+            };
+            function func(evt) {
+                var data = JSON.parse(evt.data);
+                if(data.params){
+                    re_data(data);
+                }
+            }
+            runWebsocket(url,data,func);
+        }
+
+
+        //MA计算公式
+        function calculateMA(dayCount) {
+            var result = [];
+            for (var i = 0, len = values.length; i < len; i++) {
+                if (i < dayCount) {
+                    result.push('-');
+                    continue;
+                }
+                var sum = 0;
+                for (var j = 0; j < dayCount; j++) {
+                    sum += values[i - j][1];
+                }
+                result.push(sum / dayCount);
+            }
+            return result;
+        }
+
+
+
+        //MACD
+        function calculateMACD(data) {
+            macd = [];
+            var length = data.length;
+            var ema12 = new Array(length), ema26 = new Array(length), dif = new Array(length), dea9 = new Array(length);
+            for (var i = 0; i < length; i++) {
+                ema12[i] = data[i][1]*2/13 + (ema12[i-1] ? ema12[i-1] : 0)*11/13;
+                ema26[i] = data[i][1]*2/27 + (ema26[i-1] ? ema26[i-1] : 0)*25/27;
+                dif[i] = ema12[i] - ema26[i];
+                dea9[i] = (dea9[i-1] ? dea9[i-1] : 0)*8/10 + dif[i]*2/10;
+                macd[i] = (dif[i] - dea9[i]) * 2;
+            }
+            difs = dif;
+            dea = dea9;
+        }
+
+
+        //日期时间   价格数据   成交量
+        var dates = [],values = [],vols = [];
+
+
+
+
+        //处理数据格式
+        function re_data(data) {
+            var array = [];
+            if(data.result){
+                array = data.result;
+            } else{
+                array = data.params;
+            }
+
+            for(var i = 0;i < array.length; i++){
+                var value = [];
+                for(var j = 0;j<array[i].length;j++){
+                    value[0] = Number(array[i][1]);
+                    value[1] = Number(array[i][2]);
+                    value[2] = Number(array[i][4]);
+                    value[3] = Number(array[i][3]);
+                }
+
+
+                //把时间戳转换格式
+                var dateobj=new Date(array[i][0]*1000);
+                var M= dateobj.getMinutes();//获取
+                M=M>9?M:"0"+M;
+                var dateTime = dateobj.getFullYear() + "/" + (dateobj.getMonth() + 1) + "/" + dateobj.getDate() + " " + dateobj.getHours() + ":" + M;
+
+
+                if(dates.length && dates[dates.length-1] === dateTime){
+                    values[values.length-1] = value;
+                    vols[vols.length-1] =  Number(array[i][5]);
+                } else {
+                    if(nextTime === 0 || nextTime === array[i][0]){
+                        values.push(value);
+                        dates.push(dateTime);
+                        vols.push(Number(array[i][5]));
+
+                        //保存最后一次数据的时间
+                        lt_time = array[i][0];
+                        nextTime = lt_time+60*min;
+                    }
+                }
+            }
+
+
+            calculateMACD(values);
+
+
+
+            myChart.setOption({
+                xAxis: [
+                    {
+                        type: 'category',
+                        data: dates,
+                        scale: true,
+                        boundaryGap: false,
+                        axisLine: {
+                            onZero: false
+                        },
+                        splitLine: {
+                            show: false
+                        },
+                        splitNumber: 20,
+                        min: 'dataMin',
+                        max: 'dataMax'
+                    },
+                    {
+                        type: 'category',
+                        gridIndex: 1,
+                        data: dates,
+                        axisLabel: {
+                            show: false
+                        }
+                    },
+                    {
+                        type: 'category',
+                        gridIndex: 2,
+                        data: dates,
+                        axisLabel: {
+                            show: false
+                        }
+                    }
+                ],
+                series: [
+                    {
+                        data: values
+                    },
+                    {
+                        name: 'MA5',
+                        type: 'line',
+                        data: calculateMA(5),
+                        smooth: false,
+                        showSymbol: false,
+                        lineStyle: {
+                            normal: {
+                                color:"#ffffff",
+                                width:1,
+                                opacity:0.8
+                            }
+                        }
+                    },
+                    {
+                        name: 'MA10',
+                        type: 'line',
+                        data: calculateMA(10),
+                        smooth: true,
+                        showSymbol: false,
+                        lineStyle: {
+                            normal: {
+                                color:"#dd56f8",
+                                width:1,
+                                opacity:0.8
+                            }
+                        }
+                    },
+                    {
+                        name: 'MA20',
+                        type: 'line',
+                        data: calculateMA(20),
+                        smooth: true,
+                        showSymbol: false,
+                        lineStyle: {
+                            normal: {
+                                color:"yellow",
+                                width:1,
+                                opacity:0.8
+                            }
+                        }
+                    },
+                    {
+                        name: 'Volumn',
+                        data: vols,
+                        itemStyle: {
+                            normal: {
+                                color: function(params) {
+                                    var colorList;
+                                    if (values[params.dataIndex][1] > values[params.dataIndex][0]) {
+                                        colorList = '#ef232a';
+                                    } else {
+                                        colorList = '#14b143';
+                                    }
+                                    return colorList;
+                                }
+                            }
+                        }
+                    },
+                    {
+                        name: 'MACD',
+                        type: 'bar',
+                        xAxisIndex: 2,
+                        yAxisIndex: 2,
+                        data: macd,
+                        itemStyle: {
+                            normal: {
+                                color: function(params) {
+                                    var colorList;
+                                    if (params.data >= 0) {
+                                        colorList = '#ef232a';
+                                    } else {
+                                        colorList = '#14b143';
+                                    }
+                                    return colorList;
+                                }
+                            }
+                        }
+                    },
+                    {
+                        name: 'DIF',
+                        type: 'line',
+                        data: difs,
+                        smooth: true,
+                        showSymbol: false,
+                        lineStyle: {
+                            normal: {
+                                color:"#ffffff",
+                                width:1,
+                                opacity:0.8
+                            }
+                        }
+                    },
+                    {
+                        name: 'DEA',
+                        type: 'line',
+                        data: dea,
+                        smooth: true,
+                        showSymbol: false,
+                        lineStyle: {
+                            normal: {
+                                color:"yellow",
+                                width:1,
+                                opacity:0.8
+                            }
+                        }
+                    }
+                ]
+            });
+        }
+
+
+
+        /*基于准备好的dom，初始化echarts实例*/
+        var myChart = echarts.init(document.getElementById('container'));
+
+
+
+        var option = {
+            animation:false,
+            textStyle:{
+                fontFamily: 'Microsoft YaHei'
+            },
+            title: {
+                show:false
+            },
+            axisPointer: {
+                link: {xAxisIndex: 'all'},
+                label: {
+                    backgroundColor: '#000300',
+                    padding:[3,3,3,3],
+                    fontSize:11
+                }
+            },
+            tooltip: {
+                show:true,
+                trigger: 'axis',
+                showContent:true,
+                triggerOn:"mousemove|click",
+                confine:true,
+                formatter:function (params) {
+                    //把值添加到html中
+                    var date = params[0].name;
+                    var datas,vols,ma5,ma10,ma20,macd,dif,dea;
+                    if(params[0].seriesType === "candlestick"){
+                        vols = params[4];
+                        datas = params[0];
+                        ma5 = params[1].data === "-" ? 0 : params[1].data.toFixed(2);
+                        ma10 = params[2].data === "-" ? 0 : params[2].data.toFixed(2);
+                        ma20 = params[3].data === "-" ? 0 : params[3].data.toFixed(2);
+                        macd = params[5].data;
+                        dif = params[6].data;
+                        dea = params[7].data
+                    } else if(params[0].seriesName === "Volumn"){
+                        vols = params[0];
+                        datas = params[1];
+                        ma5 = params[2].data === "-" ? 0 : params[2].data.toFixed(2);
+                        ma10 = params[3].data === "-" ? 0 : params[3].data.toFixed(2);
+                        ma20 = params[4].data === "-" ? 0 : params[4].data.toFixed(2);
+                        macd = params[5].data;
+                        dif = params[6].data;
+                        dea = params[7].data
+                    } else if(params[0].seriesName === "MACD"){
+                        macd = params[0].data;
+                        dif = params[1].data;
+                        dea = params[2].data;
+                        datas = params[3];
+                        ma5 = params[4].data === "-" ? 0 : params[4].data.toFixed(2);
+                        ma10 = params[5].data === "-" ? 0 : params[5].data.toFixed(2);
+                        ma20 = params[6].data === "-" ? 0 : params[6].data.toFixed(2);
+                        vols = params[7];
+                    }
+                    $("#series").html("<span>"+date+"</span> "+"<span>开 "+datas.data[1]+"</span> <span>高 "+datas.data[4]+"</span> <span>低 "+datas.data[3]+"</span> <span>收 "+datas.data[2]+"</span>")
+                    $("#series1").html("<span style='color:#ffffff '>MA5:"+ma5+"</span>  "+"<span style='color:#dd56f8 '>MA10:"+ma10+"</span>  "+"<span style='color:yellow '>MA20:"+ma20+"</span>");
+                    $("#series2").html("<span>VOLUME："+vols.data+"</span>");
+                    $("#series3").html("<span>MACD(12,26,9)</span> <span style='color:#ffffff '>DIF:"+dif.toFixed(2)+"</span> <span style='color:yellow'>DEA:"+dea.toFixed(2)+"</span> <span>MACD:"+macd.toFixed(2)+"</span>");
+                },
+                axisPointer: {
+                    type: 'cross',
+                    snap: true,
+                    label:{
+                        show:false,
+                        precision:0
+                    },
+                    lineStyle:{
+                        type:"solid",
+                        color:"#8a8a8a",
+                        width:0.5
+                    }
+                }
+            },
+            grid: [
+                {
+                    top:"3%",
+                    left: '1%',
+                    right: '13%',
+                    height: '47%',
+                    tooltip:{
+                        show:true
+                    }
+                },
+                {
+                    left: '1%',
+                    right: '13%',
+                    top: '60%',
+                    height: '15%'
+                },
+                {
+                    left: '1%',
+                    right: '13%',
+                    top: '85%',
+                    height: '15%'
+                }
+            ],
+            xAxis: [
+                {
+                    type: 'category',
+                    data: [],
+                    scale: true,
+                    boundaryGap: false,
+                    axisLine: {
+                        onZero: false
+                    },
+                    splitLine: {
+                        show: false
+                    },
+                    axisLabel:{
+                        color:"#787878"
+                    },
+                    splitNumber: 20,
+                    min: 'dataMin',
+                    max: 'dataMax'
+                },
+                {
+                    type: 'category',
+                    gridIndex: 1,
+                    data: [],
+                    axisLabel: {
+                        show: false
+                    },
+                    axisPointer:{
+                        label:{
+                            show:false
+                        }
+                    }
+                },
+                {
+                    type: 'category',
+                    gridIndex: 2,
+                    data: [],
+                    axisLabel: {
+                        show: false
+                    },
+                    axisPointer:{
+                        label:{
+                            show:false
+                        }
+                    }
+                }
+            ],
+            yAxis: [
+                {
+                    position:'right',
+                    scale: true,
+                    axisTick: {
+                        show: true
+                    },
+                    splitLine: {
+                        show: true,
+                        lineStyle:{
+                            color:"#2e2e2e",
+                            width:0.3,
+                            type:'dashed'
+                        }
+                    },
+                    axisPointer:{
+                        show:false
+                    },
+                    axisLabel:{
+                        color:"#787878"
+                    }
+                },
+                {
+                    gridIndex: 1,
+                    position:'right',
+                    splitNumber: 3,
+                    axisLine: {
+                        onZero: false
+                    },
+                    axisPointer:{
+                        show:false
+                    },
+                    axisTick: {
+                        show: false
+                    },
+                    splitLine: {
+                        show: false
+                    },
+                    axisLabel:{
+                        color:"#787878"
+                    }
+                },
+                {
+                    gridIndex: 2,
+                    position:'right',
+                    splitNumber: 4,
+                    axisLine: {
+                        onZero: false
+                    },
+                    axisPointer:{
+                        show:false
+                    },
+                    axisTick: {
+                        show: false
+                    },
+                    splitLine: {
+                        show: false
+                    },
+                    axisLabel:{
+                        color:"#787878"
+                    }
+                }
+            ],
+            dataZoom: [
+                {
+                    type: 'inside',
+                    xAxisIndex: [0,1,2],
+                    start: 95,
+                    end: 100
+                },
+                {
+                    show: false,
+                    xAxisIndex: [0,1,2],
+                    type: 'slider',
+                    top: '97%',
+                    start: 95,
+                    end: 100
+                }
+            ],
+            series: [
+                {
+                    type: 'candlestick',
+                    data: [],
+                    itemStyle: {
+                        normal: {
+                            color: '#ef232a',
+                            color0: '#14b143',
+                            borderColor: '#ef232a',
+                            borderColor0: '#14b143'
+                        }
+                    },
+                    markLine:{
+                        symbol:['none', 'none'],
+                        symbolSize:10,
+                        precision:2,
+                        label:{
+                            show:true,
+                            color:"yellow",
+                            fontSize:13,
+                            left:0,
+                            align:'left',
+                            backgroundColor:"#000300",
+                            borderColor:"yellow"
+                        },
+                        lineStyle:{
+                            color:"#787878",
+                            width:0.5,
+                            type:"solid"
+                        },
+                        data:[
+                            {
+                                type:'average'
+                            }
+                        ],
+                        emphasis:{
+                            lineStyle:{
+                                color:"#787878",
+                                width:0.5,
+                                type:"solid"
+                            }
+                        }
+                    },
+                    markPoint:{
+                        symbol:"pin",
+                        label:{
+                            show:true,
+                            color:"#787878"
+                        },
+                        data:[
+                            {
+                                type:'max',
+                                symbolSize:[1,20]
+                            },
+                            {
+                                type:'min',
+                                symbolSize:[1,-20]
+                            }
+                        ]
+                    }
+                },
+                {
+                    name: 'Volumn',
+                    type: 'bar',
+                    xAxisIndex: 1,
+                    yAxisIndex: 1,
+                    data: []
+                },
+                {
+                    name: 'MACD',
+                    type: 'bar',
+                    xAxisIndex: 2,
+                    yAxisIndex: 2,
+                    data: [],
+                    itemStyle: {
+                        normal: {
+                            color: function(params) {
+                                var colorList;
+                                if (params.data >= 0) {
+                                    colorList = '#ef232a';
+                                } else {
+                                    colorList = '#14b143';
+                                }
+                                return colorList;
+                            }
+                        }
+                    }
+                },
+                {
+                    name: 'DIF',
+                    type: 'line',
+                    xAxisIndex: 2,
+                    yAxisIndex: 2,
+                    data: []
+                },
+                {
+                    name: 'DEA',
+                    type: 'line',
+                    xAxisIndex: 2,
+                    yAxisIndex: 2,
+                    data: []
+                }
+            ]
+        };
+
+        if (option && typeof option === "object") {
+            myChart.setOption(option, true);
+        }
+
+    </script>
+</body>
+</html>
